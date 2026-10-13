@@ -46,6 +46,10 @@
 // one position agree to the bit).
 #define GQA_SMALL_CONTEXT 256u
 static inline uint pick_chunk(uint ctx, uint kv_heads, uint rep, uint n_sg, uint n_chunks_max) {
+#ifdef GQA_CHUNK_SG
+  // Tune the worker launch independently of the numerical softmax partition.
+  n_sg = GQA_CHUNK_SG;
+#endif
 #if ADAPTIVE_CHUNK
   return ctx <= GQA_SMALL_CONTEXT ? 32u : CH;
 #endif

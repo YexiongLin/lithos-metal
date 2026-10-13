@@ -189,7 +189,12 @@ def test_the_affine_4bit_27b_prefills_exact_512_row_chunks():
     assert backend.serving_prefill_chunk({}) is None
 
 
-def test_prepare_builds_target_and_draft_caches(checkpoint, tmp_path):
+@pytest.mark.parametrize('chip,cores,family,requested,expected', [
+    ('Apple M5 Max', 40, 10, 16, 16),
+    ('Apple M6', 12, 11, 16, 16),
+    ('Apple M6', 12, 11, 32768, 8192),
+])
+def test_prepare_builds_target_and_draft_caches(checkpoint, tmp_path, chip, cores, family, requested, expected):
     pytest.importorskip('fastapi')
     from monolith.serve import parse_args
     from monolith.serving.setup import prepare
@@ -199,10 +204,14 @@ def test_prepare_builds_target_and_draft_caches(checkpoint, tmp_path):
     draft.mkdir()
     write_checkpoint(draft, with_head=False, vocab_size=50, target_hidden_size=256, target_layer_ids=[0, 1])
     args = parse_args(['--model', str(path), '--draft', str(draft), '--pack', str(tmp_path/'cache'),
-                       '--max-context', '16', '--draft-quantization', 'nvfp4'])
-    info = SimpleNamespace(name='Apple M5 Max', gpu_cores=40, apple_family=10)
+                       '--max-context', str(requested), '--draft-quantization', 'nvfp4'])
+    info = SimpleNamespace(name=chip, gpu_cores=cores, apple_family=family)
     assets = prepare(args, device_info=info)
-    assert assets.capacity == 18 and assets.max_context == 16 and assets.gamma == 3
+    assert args.max_context == assets.max_context == expected
+    assert assets.capacity == expected + 2 and assets.gamma == 3
+    if chip == 'Apple M6':
+        assert assets.prefill_chunk_size == 128
+        assert assets.recipes == {}
     doc = json.loads((assets.draft_pack/'manifest.json').read_text())
     assert doc['quantize']['format'] == 'nvfp4'
     assert any(s['format'] == 'nvfp4' for s in doc['slabs'])

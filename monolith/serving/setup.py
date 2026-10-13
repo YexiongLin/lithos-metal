@@ -75,7 +75,7 @@ def prepare(args, *, device_info=None):
             LOG.info('Automatically selected DSpark head: %s (seven proposals plus anchor)', args.draft)
     limit = backend.serving_context_limit(drafter=bool(args.draft))
     if limit is not None and args.max_context > limit:
-        LOG.warning('Clamping --max-context from %s to %s; a larger context does not fit %s '
+        LOG.warning('Clamping --max-context from %s to %s for the %s serving policy '
                     'with %s resident', args.max_context, limit, profile.chip,
                     'the drafter' if args.draft else 'this model')
         args.max_context = limit

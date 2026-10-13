@@ -89,6 +89,7 @@ see the [model adapter design](docs/design/models.md) for supported structures a
 | M4 Pro, 16 GPU cores | Unmeasured native fallback |
 | M4 Max, 32 or 40 GPU cores | Unmeasured native fallback |
 | M5 Max, 32 GPU cores | Independent, unmeasured native fallback |
+| M6, 12 GPU cores (Apple11) | Measured tensor acceleration; 128-token prefill and 8192-token speculative context on the tested 32 GB machine ([details](monolith/backends/metal/m6/README.md)) |
 
 Backend selection uses the chip name, GPU family, and core count. Unmeasured backends have no automatic
 megakernel fusion and keep the tensor accelerator disabled. See [chip backends](monolith/backends/metal/README.md)

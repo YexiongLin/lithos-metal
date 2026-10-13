@@ -84,6 +84,8 @@ class Harness:
             self.p_dec, self.p_merge = nt.Pipeline(lib, "gqa_decode_v2"), nt.Pipeline(lib, "gqa_merge_v2")
         else:
             macros = kernels.gqa_macros(cfg.d, chunk=cfg.chunk, rb_max=cfg.rb, steal=cfg.steal, steal_hits=cfg.steal)
+            if getattr(cfg, 'chunk_sg', None) is not None:
+                macros['GQA_CHUNK_SG'] = str(cfg.chunk_sg)
             if getattr(cfg, "exact_sub", 0):
                 macros = dict(macros, EXACT_SUB=f"{cfg.exact_sub}u")
             lib = library(kernels.gqa_source(steal=cfg.steal), macros)
@@ -159,9 +161,10 @@ class Harness:
             assert not r.error, r.error
             return bf16_to_f32(np.frombuffer(out.read(0, t * c.heads * c.d * 2), dtype=np.uint16).reshape(t, c.heads * c.d))
         n_disp = self.n_sg if dispatch_sg is None else dispatch_sg
+        crew_threads = 32 * getattr(c, 'v1_threadgroup_sgs', 12)
         d1 = (nt.Dispatch().pipeline(self.p_dec).buffer(0, pb).buffer(1, self.k_cache).buffer(2, self.v_cache)
               .buffer(3, self.bufs["cos"]).buffer(4, self.bufs["sin"]).buffer(5, self.bufs["qn"]).buffer(6, self.bufs["kn"])
-              .buffer(7, self.part_o).buffer(8, self.part_md).bytes(9, params).grid(-(-(n_disp * 32) // 384)).threadgroup(384).barrier())
+              .buffer(7, self.part_o).buffer(8, self.part_md).bytes(9, params).grid(-(-(n_disp * 32) // crew_threads)).threadgroup(crew_threads).barrier())
         if c.mma:
             d1.grid(dispatch_sg or self.dev.info().gpu_cores * 4).threadgroup(32 * kernels.gqa_mma_simdgroups(c.d, c.rep))
         merge_sg = getattr(c, "merge_sg", 1)
@@ -472,6 +475,29 @@ def _pick_chunk(ctx, kv, rep, rb, n_sg, n_chunks_max, ch=64):
     while ch > 16 and kv * -(-rep // rb) * -(-ctx // (ch // 2)) <= n_sg and -(-ctx // (ch // 2)) <= n_chunks_max:
         ch //= 2
     return ch
+
+
+@pytest.mark.parametrize('position,t', [(600, 8), (512, 128), (8192, 8), (8192, 128)])
+def test_worker_tuning_preserves_softmax_partition(dev, position, t):
+    cfg = Cfg(24, 4, 256, 64, 8448, t)
+    tuned = Cfg(24, 4, 256, 64, 8448, t)
+    tuned.chunk_sg, tuned.v1_threadgroup_sgs = 144, 8
+    if position < 1000:
+        assert _pick_chunk(position+t, 4, 6, 4, 144, cfg.n_chunks_max) != _pick_chunk(
+            position+t, 4, 6, 4, 192, cfg.n_chunks_max)
+    rng = np.random.default_rng(913)
+    qn, kn = _norms(rng, cfg.d)
+    baseline, candidate = Harness(dev, cfg, qn, kn), Harness(dev, tuned, qn, kn)
+    baseline.n_sg, candidate.n_sg = 144, 192
+    keys = rbf(rng.normal(0, .5, (cfg.ctx_max, cfg.kv, cfg.d)))
+    values = rbf(rng.normal(0, .2, keys.shape))
+    keys[position:], values[position:] = 0, 0
+    baseline.set_caches(keys, values)
+    candidate.set_caches(keys, values)
+    proj = _random_proj(rng, cfg, t)
+    assert np.array_equal(baseline.step(proj, position), candidate.step(proj, position))
+    for expected, actual in zip(baseline.caches(), candidate.caches()):
+        assert np.array_equal(expected, actual)
 
 
 def test_exact_sub_reproduces_shorter_passes(dev):
