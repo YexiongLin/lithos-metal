@@ -76,6 +76,10 @@ static inline uint exact_sub_blocks(uint qpos0, uint s0, uint T, uint rep, uint 
 }
 #endif
 
+#ifndef M6_PV_MIN_ROWS
+#define M6_PV_MIN_ROWS 16u
+#endif
+
 struct GqaParams {
   uint heads; uint kv_heads; uint t_active; uint position;
   uint n_sg; uint q_off; uint gate_off; uint k_off;
